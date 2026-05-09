@@ -134,7 +134,7 @@ client.on("interactionCreate", async interaction => {
         })
         .setDescription(s.description);
 
-        if (s.image) embed.setThumbnail(s.image);
+        if (s.image) embed.setImage(s.image);
 
         return embed;
     });
