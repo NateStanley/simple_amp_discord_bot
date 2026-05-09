@@ -126,15 +126,23 @@ client.on("interactionCreate", async interaction => {
 
     const embeds = db.servers.map((s:any) => {
         const embed = new EmbedBuilder()
-        .setTitle(s.name)
         .setColor(0x00AEFF)
         .addFields({
+            name: "Name",
+            value: `**${s.name}**`,
+            inline: true
+        },{
             name: "Server Address",
-            value: `**${s.ip}**`
+            value: `**${s.ip}**`,
+            inline: true
+        }, {
+            name: "Description",
+            value: s.description || "No description provided.",
+            inline: false
         })
         .setDescription(s.description);
 
-        if (s.image) embed.setImage(s.image);
+        if (s.image) embed.setThumbnail(s.image);
 
         return embed;
     });
