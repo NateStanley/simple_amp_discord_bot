@@ -17,6 +17,12 @@ if (!TOKEN) {
   process.exit(1);
 }
 
+const GUILD_ID = process.env.GUILD_ID!;
+if (!GUILD_ID) {
+  console.error("Missing GUILD_ID in .env");
+  process.exit(1);
+}
+
 // ---------------- DATABASE ----------------
 const DB_PATH = "./db.json";
 
@@ -72,10 +78,10 @@ client.once("clientReady", async () => {
   ];
 
   const rest = new REST({ version: "10" }).setToken(TOKEN);
-  await rest.put(
-    Routes.applicationCommands(client.user!.id),
+    await rest.put(
+    Routes.applicationGuildCommands(client.user!.id, GUILD_ID),
     { body: commands.map(c => c.toJSON()) }
-  );
+    );
 
   console.log("Slash commands registered");
 });
