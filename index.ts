@@ -128,19 +128,19 @@ client.on("interactionCreate", async interaction => {
         const embed = new EmbedBuilder()
         .setColor(0x00AEFF)
         .addFields({
-            name: "Name",
-            value: `**${s.name}**`,
+            name: "Server",
+            value: `${s.name}`,
             inline: true
         },{
-            name: "Server Address",
-            value: `**${s.ip}**`,
+            name: "IP Address",
+            value: `${s.ip}`,
             inline: true
         }, {
             name: "Description",
             value: s.description || "No description provided.",
             inline: false
-        })
-        .setDescription(s.description);
+        });
+        //.setDescription(s.description);
 
         if (s.image) embed.setThumbnail(s.image);
 
