@@ -61,16 +61,24 @@ client.once("clientReady", async () => {
       .setDescription("Show community game servers"),
 
     new SlashCommandBuilder()
-      .setName("addserver")
-      .setDescription("Add a new game server (Admin only)")
-      .addStringOption(o =>
-        o.setName("name").setDescription("Unique server name").setRequired(true))
-      .addStringOption(o =>
-        o.setName("ip").setDescription("Server IP or address").setRequired(true))
-      .addStringOption(o =>
-        o.setName("description").setDescription("Server description").setRequired(true))
-      .addStringOption(o =>
-        o.setName("image").setDescription("Thumbnail image URL").setRequired(true)),
+    .setName("addserver")
+    .setDescription("Add a new game server (Admin only)")
+    .addStringOption(o =>
+        o.setName("name")
+        .setDescription("Unique server name")
+        .setRequired(true))
+    .addStringOption(o =>
+        o.setName("ip")
+        .setDescription("Server IP or address")
+        .setRequired(true))
+    .addStringOption(o =>
+        o.setName("description")
+        .setDescription("Server description")
+        .setRequired(true))
+    .addStringOption(o =>
+        o.setName("image")
+        .setDescription("Thumbnail image URL")
+        .setRequired(true)),
 
     new SlashCommandBuilder()
       .setName("removeserver")
