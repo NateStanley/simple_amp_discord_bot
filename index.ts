@@ -4,7 +4,8 @@ import {
   REST,
   Routes,
   SlashCommandBuilder,
-  EmbedBuilder
+  EmbedBuilder,
+  MessageFlags
 } from "discord.js";
 
 import { existsSync, readFileSync, writeFileSync } from "fs";
@@ -45,7 +46,7 @@ function isAdmin(interaction: any) {
 }
 
 // ---------------- REGISTER COMMANDS ----------------
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`Logged in as ${client.user?.tag}`);
 
   const commands = [
@@ -90,7 +91,7 @@ client.on("interactionCreate", async interaction => {
     if (db.servers.length === 0) {
         return interaction.reply({
         content: "No servers have been added yet.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
         });
     }
 
@@ -108,21 +109,21 @@ client.on("interactionCreate", async interaction => {
 
     return interaction.reply({
         embeds: [embed],
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
     });
     }
 
   // -------- /addserver --------
   if (interaction.commandName === "addserver") {
     if (!isAdmin(interaction))
-      return interaction.reply({ content: "Admin only command.", ephemeral: true });
+      return interaction.reply({ content: "Admin only command.", flags: MessageFlags.Ephemeral });
 
     const name = interaction.options.getString("name", true).trim();
     const ip = interaction.options.getString("ip", true).trim();
     const description = interaction.options.getString("description") ?? "No description";
 
     if (db.servers.find((s: any) => s.name.toLowerCase() === name.toLowerCase()))
-      return interaction.reply({ content: "Server already exists.", ephemeral: true });
+      return interaction.reply({ content: "Server already exists.", flags: MessageFlags.Ephemeral });
 
     db.servers.push({ name, ip, description });
     saveDB(db);
@@ -133,7 +134,7 @@ client.on("interactionCreate", async interaction => {
   // -------- /removeserver --------
   if (interaction.commandName === "removeserver") {
     if (!isAdmin(interaction))
-      return interaction.reply({ content: "Admin only command.", ephemeral: true });
+      return interaction.reply({ content: "Admin only command.", flags: MessageFlags.Ephemeral });
 
     const name = interaction.options.getString("name", true);
 
@@ -142,7 +143,7 @@ client.on("interactionCreate", async interaction => {
     );
 
     if (index === -1)
-      return interaction.reply({ content: "Server not found.", ephemeral: true });
+      return interaction.reply({ content: "Server not found.", flags: MessageFlags.Ephemeral });
 
     const removed = db.servers.splice(index, 1)[0];
     saveDB(db);
