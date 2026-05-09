@@ -48,13 +48,17 @@ client.on("interactionCreate", async interaction => {
     .setTitle("🎮 Community Game Servers")
     .setColor(0x00AEFF);
 
-  db.servers.forEach((s:any) => {
+    db.servers.forEach((s:any) => {
+    const name = s.name ?? "Unnamed Server";
+    const ip = s.ip ?? "Unknown IP";
+    const description = s.description ?? "No description";
+
     embed.addFields({
-      name: s.name,
-      value: `IP: **${s.ip}**\n${s.description}`,
-      inline: false
+        name: String(name),
+        value: `IP: **${String(ip)}**\n${String(description)}`,
+        inline: false
     });
-  });
+    });
 
   await interaction.reply({ embeds: [embed] });
 });
@@ -78,11 +82,25 @@ const server = Bun.serve({
 
     // add server
     if (url.pathname === "/api/servers" && req.method === "POST") {
-      const body = await req.json();
-      const db = getDB();
-      db.servers.push(body);
-      saveDB(db);
-      return new Response("OK");
+    const body = await req.json();
+
+    const name = String(body.name ?? "").trim();
+    const ip = String(body.ip ?? "").trim();
+    const description = String(body.description ?? "").trim();
+
+    if (!name || !ip) {
+        return new Response("Missing name or ip", { status: 400 });
+    }
+
+    const db = getDB();
+    db.servers.push({
+        name,
+        ip,
+        description: description || "No description provided"
+    });
+
+    saveDB(db);
+    return new Response("OK");
     }
 
     return new Response("Not found", { status: 404 });
