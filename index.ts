@@ -77,13 +77,26 @@ client.once("clientReady", async () => {
         o.setName("name").setDescription("Server name").setRequired(true))
   ];
 
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+    const rest = new REST({ version: "10" }).setToken(TOKEN);
+
+    // 1) Delete existing guild commands (forces refresh)
+    console.log("Clearing old commands...");
+    await rest.put(
+    Routes.applicationGuildCommands(client.user!.id, GUILD_ID),
+    { body: [] }
+    );
+
+    // small delay so Discord fully clears cache
+    await new Promise(r => setTimeout(r, 1500));
+
+    // 2) Register new commands
+    console.log("Registering new commands...");
     await rest.put(
     Routes.applicationGuildCommands(client.user!.id, GUILD_ID),
     { body: commands.map(c => c.toJSON()) }
     );
 
-  console.log("Slash commands registered");
+    console.log("Slash commands registered");
 });
 
 // ---------------- COMMAND HANDLER ----------------
