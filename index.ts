@@ -84,7 +84,16 @@ client.once("clientReady", async () => {
       .setName("removeserver")
       .setDescription("Remove a game server (Admin only)")
       .addStringOption(o =>
-        o.setName("name").setDescription("Server name").setRequired(true))
+        o.setName("name").setDescription("Server name").setRequired(true)),
+
+    new SlashCommandBuilder()
+    .setName("publish")
+    .setDescription("Publish a single server embed to the channel")
+    .addStringOption(o =>
+        o.setName("name")
+        .setDescription("Server name")
+        .setRequired(true)
+    )
   ];
 
     const rest = new REST({ version: "10" }).setToken(TOKEN);
@@ -190,6 +199,44 @@ client.on("interactionCreate", async interaction => {
 
     return interaction.reply(`Removed server **${removed.name}**.`);
   }
+
+    // -------- /publish --------
+    if (interaction.commandName === "publish") {
+    if (!isAdmin(interaction)) {
+        return interaction.reply({
+        content: "Admin only command.",
+        flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const name = interaction.options.getString("name", true).trim();
+    const db = getDB();
+
+    const server = db.servers.find(
+        (s: any) => s.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (!server) {
+        return interaction.reply({
+        content: "Server not found.",
+        flags: MessageFlags.Ephemeral
+        });
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(0x00AEFF)
+        .setTitle(server.name)
+        .addFields(
+        { name: "IP Address", value: server.ip, inline: true },
+        { name: "Description", value: server.description || "No description", inline: false }
+        );
+
+    if (server.image) embed.setThumbnail(server.image);
+
+    return interaction.reply({
+        embeds: [embed] // NOT ephemeral → public message
+    });
+    }
 });
 
 // ---------------- LOGIN ----------------
