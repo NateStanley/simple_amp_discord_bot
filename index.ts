@@ -1,110 +1,155 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder } from "discord.js";
-import { readFileSync, writeFileSync } from "fs";
+import {
+  Client,
+  GatewayIntentBits,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  EmbedBuilder
+} from "discord.js";
 
-// -------- Environment --------
+import { existsSync, readFileSync, writeFileSync } from "fs";
+
+// ---------------- ENV ----------------
 const TOKEN = process.env.DISCORD_TOKEN!;
-const PORT = Number(process.env.PORT ?? 3000);
-
 if (!TOKEN) {
-  console.error("Missing DISCORD_TOKEN in .env file");
+  console.error("Missing DISCORD_TOKEN in .env");
   process.exit(1);
 }
 
-// -------- Database helpers --------
+// ---------------- DATABASE ----------------
+const DB_PATH = "./db.json";
+
+function ensureDB() {
+  if (!existsSync(DB_PATH)) {
+    console.log("Creating database...");
+    writeFileSync(DB_PATH, JSON.stringify({ servers: [] }, null, 2));
+  }
+}
+
 function getDB() {
-  return JSON.parse(readFileSync("./db.json", "utf8"));
+  ensureDB();
+  return JSON.parse(readFileSync(DB_PATH, "utf8"));
 }
 
-function saveDB(db:any) {
-  writeFileSync("./db.json", JSON.stringify(db, null, 2));
+function saveDB(db: any) {
+  writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
 }
 
-// -------- Discord Bot --------
+// ---------------- DISCORD CLIENT ----------------
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-client.once("ready", async () => {
-  console.log("Bot ready");
+function isAdmin(interaction: any) {
+  return interaction.memberPermissions?.has("Administrator");
+}
 
-  const command = new SlashCommandBuilder()
-    .setName("ip")
-    .setDescription("Show community game servers");
+// ---------------- REGISTER COMMANDS ----------------
+client.once("ready", async () => {
+  console.log(`Logged in as ${client.user?.tag}`);
+
+  const commands = [
+    new SlashCommandBuilder()
+      .setName("ip")
+      .setDescription("Show community game servers"),
+
+    new SlashCommandBuilder()
+      .setName("addserver")
+      .setDescription("Add a new game server (Admin only)")
+      .addStringOption(o =>
+        o.setName("name").setDescription("Unique server name").setRequired(true))
+      .addStringOption(o =>
+        o.setName("ip").setDescription("Server IP or address").setRequired(true))
+      .addStringOption(o =>
+        o.setName("description").setDescription("Optional description")),
+
+    new SlashCommandBuilder()
+      .setName("removeserver")
+      .setDescription("Remove a game server (Admin only)")
+      .addStringOption(o =>
+        o.setName("name").setDescription("Server name").setRequired(true))
+  ];
 
   const rest = new REST({ version: "10" }).setToken(TOKEN);
   await rest.put(
     Routes.applicationCommands(client.user!.id),
-    { body: [command.toJSON()] }
+    { body: commands.map(c => c.toJSON()) }
   );
+
+  console.log("Slash commands registered");
 });
 
+// ---------------- COMMAND HANDLER ----------------
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "ip") return;
 
   const db = getDB();
 
-  const embed = new EmbedBuilder()
-    .setTitle("🎮 Community Game Servers")
-    .setColor(0x00AEFF);
+    // -------- /ip --------
+    if (interaction.commandName === "ip") {
+    if (db.servers.length === 0) {
+        return interaction.reply({
+        content: "No servers have been added yet.",
+        ephemeral: true
+        });
+    }
 
-    db.servers.forEach((s:any) => {
-    const name = s.name ?? "Unnamed Server";
-    const ip = s.ip ?? "Unknown IP";
-    const description = s.description ?? "No description";
+    const embed = new EmbedBuilder()
+        .setTitle("🎮 Community Game Servers")
+        .setColor(0x00AEFF);
 
-    embed.addFields({
-        name: String(name),
-        value: `IP: **${String(ip)}**\n${String(description)}`,
+    db.servers.forEach((s: any) => {
+        embed.addFields({
+        name: String(s.name),
+        value: `IP: **${String(s.ip)}**\n${String(s.description)}`,
         inline: false
+        });
     });
+
+    return interaction.reply({
+        embeds: [embed],
+        ephemeral: true
     });
-
-  await interaction.reply({ embeds: [embed] });
-});
-
-client.login(TOKEN);
-
-// -------- Web Dashboard API --------
-const server = Bun.serve({
-  port: PORT,
-  async fetch(req) {
-    const url = new URL(req.url);
-
-    // serve dashboard
-    if (url.pathname === "/")
-      return new Response(Bun.file("./public/index.html"));
-
-    // get servers
-    if (url.pathname === "/api/servers" && req.method === "GET") {
-      return Response.json(getDB().servers);
     }
 
-    // add server
-    if (url.pathname === "/api/servers" && req.method === "POST") {
-    const body = await req.json();
+  // -------- /addserver --------
+  if (interaction.commandName === "addserver") {
+    if (!isAdmin(interaction))
+      return interaction.reply({ content: "Admin only command.", ephemeral: true });
 
-    const name = String(body.name ?? "").trim();
-    const ip = String(body.ip ?? "").trim();
-    const description = String(body.description ?? "").trim();
+    const name = interaction.options.getString("name", true).trim();
+    const ip = interaction.options.getString("ip", true).trim();
+    const description = interaction.options.getString("description") ?? "No description";
 
-    if (!name || !ip) {
-        return new Response("Missing name or ip", { status: 400 });
-    }
+    if (db.servers.find((s: any) => s.name.toLowerCase() === name.toLowerCase()))
+      return interaction.reply({ content: "Server already exists.", ephemeral: true });
 
-    const db = getDB();
-    db.servers.push({
-        name,
-        ip,
-        description: description || "No description provided"
-    });
-
+    db.servers.push({ name, ip, description });
     saveDB(db);
-    return new Response("OK");
-    }
 
-    return new Response("Not found", { status: 404 });
+    return interaction.reply(`Server **${name}** added.`);
+  }
+
+  // -------- /removeserver --------
+  if (interaction.commandName === "removeserver") {
+    if (!isAdmin(interaction))
+      return interaction.reply({ content: "Admin only command.", ephemeral: true });
+
+    const name = interaction.options.getString("name", true);
+
+    const index = db.servers.findIndex((s: any) =>
+      s.name.toLowerCase() === name.toLowerCase()
+    );
+
+    if (index === -1)
+      return interaction.reply({ content: "Server not found.", ephemeral: true });
+
+    const removed = db.servers.splice(index, 1)[0];
+    saveDB(db);
+
+    return interaction.reply(`Removed server **${removed.name}**.`);
   }
 });
 
-console.log(`Dashboard running on port ${PORT}`);
+// ---------------- LOGIN ----------------
+client.login(TOKEN);
