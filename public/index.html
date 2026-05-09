@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Game Server Dashboard</title>
+</head>
+<body>
+<h1>Game Servers</h1>
+
+<input id="name" placeholder="Server Name">
+<input id="ip" placeholder="IP">
+<input id="desc" placeholder="Description">
+<button onclick="addServer()">Add</button>
+
+<ul id="list"></ul>
+
+<script>
+async function load() {
+  const res = await fetch('/api/servers');
+  const servers = await res.json();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  servers.forEach(s => {
+    list.innerHTML += `<li><b>${s.name}</b> - ${s.ip} - ${s.description}</li>`;
+  });
+}
+
+async function addServer() {
+  await fetch('/api/servers', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      name:name.value,
+      ip:ip.value,
+      description:desc.value
+    })
+  });
+  load();
+}
+
+load();
+</script>
+</body>
+</html>
