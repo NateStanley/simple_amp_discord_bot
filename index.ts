@@ -101,41 +101,44 @@ client.on("interactionCreate", async interaction => {
         });
     }
 
-    const embed = new EmbedBuilder()
-        .setTitle("🎮 Community Game Servers")
-        .setColor(0x00AEFF);
+    const embeds = db.servers.map((s:any) => {
+        const embed = new EmbedBuilder()
+        .setTitle(s.name)
+        .setColor(0x00AEFF)
+        .addFields({
+            name: "Server Address",
+            value: `**${s.ip}**`
+        })
+        .setDescription(s.description);
 
-    db.servers.forEach((s: any) => {
-        embed.addFields({
-        name: String(s.name),
-        value: `IP: **${String(s.ip)}**\n${String(s.description)}`,
-        inline: false
-        });
+        if (s.image) embed.setThumbnail(s.image);
+
+        return embed;
     });
 
     return interaction.reply({
-        embeds: [embed],
+        embeds,
         flags: MessageFlags.Ephemeral
     });
     }
-
   // -------- /addserver --------
-  if (interaction.commandName === "addserver") {
+    if (interaction.commandName === "addserver") {
     if (!isAdmin(interaction))
-      return interaction.reply({ content: "Admin only command.", flags: MessageFlags.Ephemeral });
+        return interaction.reply({ content: "Admin only command.", flags: MessageFlags.Ephemeral });
 
     const name = interaction.options.getString("name", true).trim();
     const ip = interaction.options.getString("ip", true).trim();
     const description = interaction.options.getString("description") ?? "No description";
+    const image = interaction.options.getString("image") ?? null;
 
-    if (db.servers.find((s: any) => s.name.toLowerCase() === name.toLowerCase()))
-      return interaction.reply({ content: "Server already exists.", flags: MessageFlags.Ephemeral });
+    if (db.servers.find((s:any) => s.name.toLowerCase() === name.toLowerCase()))
+        return interaction.reply({ content: "Server already exists.", flags: MessageFlags.Ephemeral });
 
-    db.servers.push({ name, ip, description });
+    db.servers.push({ name, ip, description, image });
     saveDB(db);
 
     return interaction.reply(`Server **${name}** added.`);
-  }
+    }
 
   // -------- /removeserver --------
   if (interaction.commandName === "removeserver") {
