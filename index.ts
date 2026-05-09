@@ -97,11 +97,7 @@ client.once("clientReady", async () => {
   ];
 
     const rest = new REST({ version: "10" }).setToken(TOKEN);
-    // CLEAR GLOBAL (important)
-    await rest.put(
-    Routes.applicationCommands(client.user!.id),
-    { body: [] }
-    );
+    
     // 1) Delete existing guild commands (forces refresh)
     console.log("Clearing old commands...");
     await rest.put(
