@@ -1,9 +1,0 @@
-{
-  "servers": [
-    {
-      "name": "Minecraft Survival",
-      "ip": "mc.example.com",
-      "description": "Main survival world"
-    }
-  ]
-}

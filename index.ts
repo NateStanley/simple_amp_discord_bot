@@ -128,8 +128,8 @@ client.on("interactionCreate", async interaction => {
 
     const name = interaction.options.getString("name", true).trim();
     const ip = interaction.options.getString("ip", true).trim();
-    const description = interaction.options.getString("description") ?? "No description";
-    const image = interaction.options.getString("image") ?? null;
+    const description = interaction.options.getString("description", true).trim();
+    const image = interaction.options.getString("image", true).trim();
 
     if (db.servers.find((s:any) => s.name.toLowerCase() === name.toLowerCase()))
         return interaction.reply({ content: "Server already exists.", flags: MessageFlags.Ephemeral });
