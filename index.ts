@@ -6,7 +6,8 @@ import {
   SlashCommandBuilder,
   EmbedBuilder,
   MessageFlags,
-  Partials
+  Partials,
+  AttachmentBuilder
 } from "discord.js";
 
 import { existsSync, readFileSync, writeFileSync } from "fs";
@@ -231,7 +232,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 // Checks run one at a time; a check requested while another runs waits for it to finish
 let domainCheckQueue: Promise<unknown> = Promise.resolve();
 
-function checkDomains(opts: { force?: boolean } = {}): Promise<string[]> {
+function whoisAttachment(domain: string, raw: string) {
+  return new AttachmentBuilder(Buffer.from(raw, "utf8"), { name: `${domain}-whois.txt` });
+}
+
+type DomainCheckResult = { summary: string[]; files: AttachmentBuilder[] };
+
+function checkDomains(opts: { force?: boolean } = {}): Promise<DomainCheckResult> {
   const run = domainCheckQueue.then(() => runDomainCheck(opts));
   domainCheckQueue = run.catch(() => {});
   return run;
@@ -240,6 +247,7 @@ function checkDomains(opts: { force?: boolean } = {}): Promise<string[]> {
 async function runDomainCheck(opts: { force?: boolean }) {
   const config = loadConfig();
   const summary: string[] = [];
+  const files: AttachmentBuilder[] = [];
   console.log(`Domain check started (${config.domains.length} domain(s), whois: ${config.whoisPath})`);
 
   try {
@@ -252,6 +260,7 @@ async function runDomainCheck(opts: { force?: boolean }) {
       const raw = await runWhois(config.whoisPath, domain);
       const info = raw ? parseWhois(raw) : null;
       summary.push(domainSummaryLine(domain, info));
+      if (raw) files.push(whoisAttachment(domain, raw));
 
       if (raw && info) {
         const state = db.domainWatch[domain] ?? { lastAlertKey: null, lastExpiry: null };
@@ -268,7 +277,7 @@ async function runDomainCheck(opts: { force?: boolean }) {
         const isNew = alert !== null && alertRank(alert.key) > alertRank(state.lastAlertKey);
         if (alert && (opts.force || isNew)) {
           try {
-            await withTimeout(user.send({ embeds: [buildDomainEmbed(domain, info, raw, alert)] }), 30_000, `DM for ${domain}`);
+            await withTimeout(user.send({ embeds: [buildDomainEmbed(domain, info, raw, alert)], files: [whoisAttachment(domain, raw)] }), 30_000, `DM for ${domain}`);
             console.log(`Sent ${alert.key} alert for ${domain}`);
             if (isNew) state.lastAlertKey = alert.key;
           } catch (e) {
@@ -290,7 +299,7 @@ async function runDomainCheck(opts: { force?: boolean }) {
   }
 
   console.log("Domain check finished");
-  return summary;
+  return { summary, files };
 }
 
 function startDomainWatch() {
@@ -379,8 +388,14 @@ client.on("messageCreate", async message => {
     console.log("!checkdomains requested");
     try {
       await message.reply("Checking domains...");
-      const summary = await checkDomains({ force: true });
-      await message.reply(summary.join("\n").slice(0, 2000) || "No domains configured.");
+      const { summary, files } = await checkDomains({ force: true });
+      // Discord allows at most 10 attachments per message
+      await message.reply({
+        content: summary.join("\n").slice(0, 2000) || "No domains configured.",
+        files: files.slice(0, 10)
+      });
+      for (let i = 10; i < files.length; i += 10)
+        await message.reply({ files: files.slice(i, i + 10) });
     } catch (e) {
       console.error("!checkdomains failed:", e);
     }
