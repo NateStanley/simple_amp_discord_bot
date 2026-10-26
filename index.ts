@@ -87,8 +87,11 @@ async function runWhois(whoisPath: string, domain: string): Promise<string | nul
     await proc.exited;
     const text = (out + "\n" + err).trim();
     return text || null;
-  } catch (e) {
-    console.error(`whois failed for ${domain}:`, e);
+  } catch (e: any) {
+    if (e?.code === "ENOENT")
+      console.error(`whois failed for ${domain}: "${whoisPath}" not found. Set WHOIS_PATH or domainWatch.whoisPath to the full path of whois.exe.`);
+    else
+      console.error(`whois failed for ${domain}:`, e);
     return null;
   }
 }
@@ -218,20 +221,34 @@ function domainSummaryLine(domain: string, info: WhoisInfo | null) {
   return `**${domain}**: ${exp}, ${info.statuses.slice(0, 3).join(", ") || "no status"}`;
 }
 
-let checkingDomains = false;
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+  ]);
+}
 
-async function checkDomains(opts: { force?: boolean } = {}) {
+// Checks run one at a time; a check requested while another runs waits for it to finish
+let domainCheckQueue: Promise<unknown> = Promise.resolve();
+
+function checkDomains(opts: { force?: boolean } = {}): Promise<string[]> {
+  const run = domainCheckQueue.then(() => runDomainCheck(opts));
+  domainCheckQueue = run.catch(() => {});
+  return run;
+}
+
+async function runDomainCheck(opts: { force?: boolean }) {
   const config = loadConfig();
   const summary: string[] = [];
-  if (checkingDomains) return ["A domain check is already running."];
-  checkingDomains = true;
+  console.log(`Domain check started (${config.domains.length} domain(s), whois: ${config.whoisPath})`);
 
   try {
-    const user = await client.users.fetch(config.notifyUserId);
+    const user = await withTimeout(client.users.fetch(config.notifyUserId), 30_000, "Fetching notify user");
     const db = getDB();
     db.domainWatch ??= {};
 
     for (const domain of config.domains) {
+      console.log(`Checking ${domain}...`);
       const raw = await runWhois(config.whoisPath, domain);
       const info = raw ? parseWhois(raw) : null;
       summary.push(domainSummaryLine(domain, info));
@@ -251,7 +268,8 @@ async function checkDomains(opts: { force?: boolean } = {}) {
         const isNew = alert !== null && alertRank(alert.key) > alertRank(state.lastAlertKey);
         if (alert && (opts.force || isNew)) {
           try {
-            await user.send({ embeds: [buildDomainEmbed(domain, info, raw, alert)] });
+            await withTimeout(user.send({ embeds: [buildDomainEmbed(domain, info, raw, alert)] }), 30_000, `DM for ${domain}`);
+            console.log(`Sent ${alert.key} alert for ${domain}`);
             if (isNew) state.lastAlertKey = alert.key;
           } catch (e) {
             console.error(`Failed to DM alert for ${domain}:`, e);
@@ -269,10 +287,9 @@ async function checkDomains(opts: { force?: boolean } = {}) {
   } catch (e) {
     console.error("Domain check failed:", e);
     summary.push("Domain check failed, see bot logs.");
-  } finally {
-    checkingDomains = false;
   }
 
+  console.log("Domain check finished");
   return summary;
 }
 
@@ -359,9 +376,14 @@ client.on("messageCreate", async message => {
   if (message.author.id !== loadConfig().notifyUserId) return;
 
   if (message.content.trim().toLowerCase() === "!checkdomains") {
-    await message.reply("Checking domains...");
-    const summary = await checkDomains({ force: true });
-    await message.reply(summary.join("\n").slice(0, 2000) || "No domains configured.");
+    console.log("!checkdomains requested");
+    try {
+      await message.reply("Checking domains...");
+      const summary = await checkDomains({ force: true });
+      await message.reply(summary.join("\n").slice(0, 2000) || "No domains configured.");
+    } catch (e) {
+      console.error("!checkdomains failed:", e);
+    }
   }
 });
 
