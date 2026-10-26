@@ -1,0 +1,9 @@
+{
+  "domainWatch": {
+    "notifyUserId": "132224355617734656",
+    "whoisPath": "whois",
+    "checkIntervalHours": 12,
+    "alertDays": [30, 7, 1],
+    "domains": ["nathanstanley.com", "natestanley.com"]
+  }
+}

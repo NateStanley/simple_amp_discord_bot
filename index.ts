@@ -5,7 +5,8 @@ import {
   Routes,
   SlashCommandBuilder,
   EmbedBuilder,
-  MessageFlags
+  MessageFlags,
+  Partials
 } from "discord.js";
 
 import { existsSync, readFileSync, writeFileSync } from "fs";
@@ -44,11 +45,242 @@ function saveDB(db: any) {
 
 // ---------------- DISCORD CLIENT ----------------
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages],
+  // DM channels aren't cached, so this is needed to receive DM messageCreate events
+  partials: [Partials.Channel]
 });
 
 function isAdmin(interaction: any) {
   return interaction.memberPermissions?.has("Administrator");
+}
+
+// ---------------- DOMAIN WATCH ----------------
+const CONFIG_PATH = "./config.json";
+
+function loadConfig() {
+  const config = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
+  const dw = config.domainWatch ?? {};
+  return {
+    notifyUserId: String(dw.notifyUserId ?? ""),
+    // WHOIS_PATH in .env overrides for dev (e.g. C:\tools\whois\whois.exe)
+    whoisPath: process.env.WHOIS_PATH || dw.whoisPath || "whois",
+    checkIntervalHours: Number(dw.checkIntervalHours ?? 12),
+    alertDays: ((dw.alertDays ?? [30, 7, 1]) as number[]).slice().sort((a, b) => a - b),
+    domains: ((dw.domains ?? []) as string[]).map(d => d.trim().toLowerCase()).filter(Boolean)
+  };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const WHOIS_TIMEOUT_MS = 30_000;
+
+async function runWhois(whoisPath: string, domain: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn([whoisPath, "-accepteula", "-nobanner", domain], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: WHOIS_TIMEOUT_MS
+    });
+    const [out, err] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text()
+    ]);
+    await proc.exited;
+    const text = (out + "\n" + err).trim();
+    return text || null;
+  } catch (e) {
+    console.error(`whois failed for ${domain}:`, e);
+    return null;
+  }
+}
+
+const AVAILABLE_RE = /No whois information found|No match for|NOT FOUND|No Data Found|is available|Status:\s*free|No entries found/i;
+
+function findField(raw: string, labels: string[]): string | null {
+  for (const label of labels) {
+    const m = raw.match(new RegExp(`^\\s*${label}\\s*:\\s*(.+)$`, "im"));
+    if (m && m[1]!.trim()) return m[1]!.trim();
+  }
+  return null;
+}
+
+function parseDate(value: string | null): Date | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function parseWhois(raw: string) {
+  const statuses = [...raw.matchAll(/^\s*(?:Domain )?Status\s*:\s*(\S+)/gim)].map(m => m[1]!);
+  return {
+    available: AVAILABLE_RE.test(raw) && !/Creation Date|Expir/i.test(raw),
+    expiry: parseDate(findField(raw, [
+      "Registry Expiry Date",
+      "Registrar Registration Expiration Date",
+      "Expiration Date",
+      "Expiry Date",
+      "Expiry date",
+      "paid-till",
+      "Expires On",
+      "expires"
+    ])),
+    created: parseDate(findField(raw, ["Creation Date", "Created On", "Registered On", "created"])),
+    updated: parseDate(findField(raw, ["Updated Date", "Last Updated On", "Last Modified", "changed"])),
+    registrar: findField(raw, ["Registrar", "Sponsoring Registrar"]),
+    statuses: [...new Set(statuses)]
+  };
+}
+
+type WhoisInfo = ReturnType<typeof parseWhois>;
+
+// Higher rank = more urgent. Expiry thresholds rank by how few days are left.
+function alertRank(key: string | null): number {
+  if (!key) return 0;
+  const fixed: Record<string, number> = {
+    expired: 10_000,
+    redemptionPeriod: 10_001,
+    pendingDelete: 10_002,
+    available: 10_003
+  };
+  if (key in fixed) return fixed[key]!;
+  return 1_000 - Number(key.slice(1)); // d30 < d7 < d1
+}
+
+function getAlert(info: WhoisInfo, alertDays: number[]): { key: string; reason: string } | null {
+  if (info.available)
+    return { key: "available", reason: "Domain is AVAILABLE to purchase" };
+
+  const statuses = info.statuses.map(s => s.toLowerCase());
+  if (statuses.some(s => s.includes("pendingdelete")))
+    return { key: "pendingDelete", reason: "Domain is pending delete (drops within ~5 days)" };
+  if (statuses.some(s => s.includes("redemptionperiod")))
+    return { key: "redemptionPeriod", reason: "Domain is in redemption period" };
+
+  if (!info.expiry) return null;
+  const daysLeft = (info.expiry.getTime() - Date.now()) / DAY_MS;
+  if (daysLeft <= 0)
+    return { key: "expired", reason: "Domain has expired" };
+
+  const threshold = alertDays.find(d => daysLeft <= d);
+  if (threshold !== undefined)
+    return { key: `d${threshold}`, reason: `Domain expires within ${threshold} day${threshold === 1 ? "" : "s"}` };
+
+  return null;
+}
+
+function ts(d: Date | null) {
+  if (!d) return "Unknown";
+  const unix = Math.floor(d.getTime() / 1000);
+  return `<t:${unix}:F> (<t:${unix}:R>)`;
+}
+
+function whoisExcerpt(raw: string) {
+  const lines = raw
+    .split(/\r?\n/)
+    .filter(l => /^\s*[\w.-]{3,}(?: [\w./-]+){0,4}:\s*\S/.test(l) && !/^\s*(Connecting|NOTICE|TERMS|URL of the ICANN)/i.test(l));
+  let out = "";
+  for (const l of lines) {
+    if (out.length + l.length + 1 > 990) break;
+    out += l.trim() + "\n";
+  }
+  return out || raw.slice(0, 990);
+}
+
+function buildDomainEmbed(domain: string, info: WhoisInfo, raw: string, alert: { key: string; reason: string }) {
+  const urgent = !alert.key.startsWith("d") || Number(alert.key.slice(1)) <= 7;
+
+  const embed = new EmbedBuilder()
+    .setColor(urgent ? 0xE53935 : 0xFB8C00)
+    .setTitle(`${domain}: ${alert.reason}`)
+    .setTimestamp(new Date());
+
+  if (info.available) {
+    embed.setDescription("No whois record found. The domain looks available to register.");
+  } else {
+    const daysLeft = info.expiry ? Math.floor((info.expiry.getTime() - Date.now()) / DAY_MS) : null;
+    embed.addFields(
+      { name: "Registrar", value: info.registrar || "Unknown", inline: true },
+      { name: "Days Left", value: daysLeft === null ? "Unknown" : String(daysLeft), inline: true },
+      { name: "Status", value: info.statuses.join("\n").slice(0, 1024) || "Unknown", inline: false },
+      { name: "Created", value: ts(info.created), inline: false },
+      { name: "Updated", value: ts(info.updated), inline: false },
+      { name: "Expires", value: ts(info.expiry), inline: false }
+    );
+  }
+
+  embed.addFields({ name: "Whois", value: "```\n" + whoisExcerpt(raw) + "```", inline: false });
+  return embed;
+}
+
+function domainSummaryLine(domain: string, info: WhoisInfo | null) {
+  if (!info) return `**${domain}**: whois lookup failed`;
+  if (info.available) return `**${domain}**: AVAILABLE`;
+  const exp = info.expiry ? `expires <t:${Math.floor(info.expiry.getTime() / 1000)}:R>` : "expiry unknown";
+  return `**${domain}**: ${exp}, ${info.statuses.slice(0, 3).join(", ") || "no status"}`;
+}
+
+let checkingDomains = false;
+
+async function checkDomains(opts: { force?: boolean } = {}) {
+  const config = loadConfig();
+  const summary: string[] = [];
+  if (checkingDomains) return ["A domain check is already running."];
+  checkingDomains = true;
+
+  try {
+    const user = await client.users.fetch(config.notifyUserId);
+    const db = getDB();
+    db.domainWatch ??= {};
+
+    for (const domain of config.domains) {
+      const raw = await runWhois(config.whoisPath, domain);
+      const info = raw ? parseWhois(raw) : null;
+      summary.push(domainSummaryLine(domain, info));
+
+      if (raw && info) {
+        const state = db.domainWatch[domain] ?? { lastAlertKey: null, lastExpiry: null };
+        const expiryIso = info.expiry?.toISOString() ?? null;
+
+        // Renewed or re-registered: start alerting from scratch
+        if (!info.available && expiryIso && expiryIso !== state.lastExpiry) {
+          if (state.lastExpiry && new Date(expiryIso) > new Date(state.lastExpiry)) state.lastAlertKey = null;
+          state.lastExpiry = expiryIso;
+        }
+        if (!info.available && state.lastAlertKey === "available") state.lastAlertKey = null;
+
+        const alert = getAlert(info, config.alertDays);
+        const isNew = alert !== null && alertRank(alert.key) > alertRank(state.lastAlertKey);
+        if (alert && (opts.force || isNew)) {
+          try {
+            await user.send({ embeds: [buildDomainEmbed(domain, info, raw, alert)] });
+            if (isNew) state.lastAlertKey = alert.key;
+          } catch (e) {
+            console.error(`Failed to DM alert for ${domain}:`, e);
+          }
+        }
+
+        db.domainWatch[domain] = state;
+      }
+
+      // be gentle with whois servers
+      await new Promise(r => setTimeout(r, 2000));
+    }
+
+    saveDB(db);
+  } catch (e) {
+    console.error("Domain check failed:", e);
+    summary.push("Domain check failed, see bot logs.");
+  } finally {
+    checkingDomains = false;
+  }
+
+  return summary;
+}
+
+function startDomainWatch() {
+  const { checkIntervalHours, domains } = loadConfig();
+  console.log(`Watching ${domains.length} domain(s), checking every ${checkIntervalHours}h`);
+  checkDomains();
+  setInterval(() => checkDomains(), checkIntervalHours * 60 * 60 * 1000);
 }
 
 // ---------------- REGISTER COMMANDS ----------------
@@ -116,6 +348,21 @@ client.once("clientReady", async () => {
     );
 
     console.log("Slash commands registered");
+
+    startDomainWatch();
+});
+
+// ---------------- DM COMMANDS ----------------
+// Plain text commands, only accepted in DMs from the configured user
+client.on("messageCreate", async message => {
+  if (message.guild || message.author.bot) return;
+  if (message.author.id !== loadConfig().notifyUserId) return;
+
+  if (message.content.trim().toLowerCase() === "!checkdomains") {
+    await message.reply("Checking domains...");
+    const summary = await checkDomains({ force: true });
+    await message.reply(summary.join("\n").slice(0, 2000) || "No domains configured.");
+  }
 });
 
 // ---------------- COMMAND HANDLER ----------------
